@@ -1,8 +1,12 @@
 import * as functions from 'firebase-functions';
 import * as admin from 'firebase-admin';
 import * as request from 'request-promise';
+import * as algoliasearch from 'algoliasearch';
 
-const ACTIVE_KEY = functions.config().activecampaign.key;
+const env = functions.config();
+const ACTIVE_KEY = env.activecampaign.key;
+const client = algoliasearch(env.algolia.appid, env.algolia.apikey);
+const blogsIndex = client.initIndex('Blogs');
 
 const increment = admin.firestore.FieldValue.increment(1);
 const decrement = admin.firestore.FieldValue.increment(-1);
@@ -32,16 +36,32 @@ const getStats = async (collection: any, action: 'decrement' | 'increment') => {
 };
 
 export const onCreate = collections.reduce((acc: any, collection) => {
-  acc[collection] = functions.firestore
-    .document(`${collection}/{${collection.toLowerCase()}Id}`)
-    .onCreate(() => getStats(collection, 'increment'));
+  acc[collection] = functions.firestore.document(`${collection}/{${collection.toLowerCase()}Id}`).onCreate(snap => {
+    const data = snap.data();
+    const objectID = snap.id;
+    getStats(collection, 'increment').catch(console.error);
+
+    // Add the data to the algolia index
+    if (collection === 'Blogs') {
+      return blogsIndex.addObject({
+        objectID,
+        ...data,
+      });
+    }
+  });
   return { ...acc };
 }, {});
 
 export const onDelete = collections.reduce((acc: any, collection) => {
-  acc[collection] = functions.firestore
-    .document(`${collection}/{${collection.toLowerCase()}Id}`)
-    .onDelete(() => getStats(collection, 'decrement'));
+  acc[collection] = functions.firestore.document(`${collection}/{${collection.toLowerCase()}Id}`).onDelete(snap => {
+    const objectID = snap.id;
+    getStats(collection, 'decrement').catch(console.error);
+
+    // Delete from algolia index
+    if (collection === 'Blogs') {
+      return blogsIndex.deleteObject(objectID);
+    }
+  });
   return { ...acc };
 }, {});
 
