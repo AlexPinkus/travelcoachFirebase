@@ -1,12 +1,12 @@
 import * as functions from 'firebase-functions';
 import * as admin from 'firebase-admin';
 import * as request from 'request-promise';
-import * as algoliasearch from 'algoliasearch';
+import algoliasearch from 'algoliasearch';
 
 const env = functions.config();
 const ACTIVE_KEY = env.activecampaign.key;
 const client = algoliasearch(env.algolia.appid, env.algolia.apikey);
-const blogsIndex = client.initIndex('Blogs');
+const blogsIndex = client.initIndex('dev_blogs');
 
 const increment = admin.firestore.FieldValue.increment(1);
 const decrement = admin.firestore.FieldValue.increment(-1);
@@ -39,29 +39,42 @@ export const onCreate = collections.reduce((acc: any, collection) => {
   acc[collection] = functions.firestore.document(`${collection}/{${collection.toLowerCase()}Id}`).onCreate(snap => {
     const data = snap.data();
     const objectID = snap.id;
-    getStats(collection, 'increment').catch(console.error);
-
+    let stats;
+    try {
+      stats = getStats(collection, 'increment');
+    } catch (error) {
+      console.log('error :', error);
+    }
     // Add the data to the algolia index
     if (collection === 'Blogs') {
-      return blogsIndex.addObject({
+      return blogsIndex.saveObject({
         objectID,
         ...data,
       });
     }
+    return stats;
   });
   return { ...acc };
 }, {});
 
 export const onDelete = collections.reduce((acc: any, collection) => {
-  acc[collection] = functions.firestore.document(`${collection}/{${collection.toLowerCase()}Id}`).onDelete(snap => {
-    const objectID = snap.id;
-    getStats(collection, 'decrement').catch(console.error);
+  acc[collection] = functions.firestore
+    .document(`${collection}/{${collection.toLowerCase()}Id}`)
+    .onDelete(async snap => {
+      const objectID = snap.id;
+      let stats;
+      try {
+        stats = await getStats(collection, 'decrement');
+      } catch (error) {
+        console.log('error :', error);
+      }
 
-    // Delete from algolia index
-    if (collection === 'Blogs') {
-      return blogsIndex.deleteObject(objectID);
-    }
-  });
+      // Delete from algolia index
+      if (collection === 'Blogs') {
+        return blogsIndex.deleteObject(objectID);
+      }
+      return stats;
+    });
   return { ...acc };
 }, {});
 
